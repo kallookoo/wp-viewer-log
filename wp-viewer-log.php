@@ -1,51 +1,29 @@
 <?php
-/*
-Plugin Name: WP Viewer Log
-Plugin URI: http://wordpress.org/extend/plugins/wp-viewer-log/
-Description: Lets see how many errors have had in the present day through a widget, configure your wp-config.php and see the file log.
-Author: Sergio P.A. ( 23r9i0 )
-Version: 2.0.1
-Author URI: http://dsergio.com/
-*/
-/*  Copyright 2013  Sergio Prieto Alvarez  ( email : info@dsergio.com )
+/**
+ * Plugin Name: WP Viewer Log
+ * Plugin URI: https://wordpress.org/plugins/wp-viewer-log/
+ * Description: Lets see how many errors have had in the present day through a widget, configure your wp-config.php and see the file log.
+ * Author: Sergio ( kallookoo )
+ * Version: 2.0.2
+ * Author URI: https://dsergio.com/
+ * License: GPL2 or later
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.html
+ */
 
-    This program is free software; you can redistribute it and/or modify
-    it under the terms of the GNU General License as published by
-    the Free Software Foundation; either version 2 of the License, or
-    ( at your option ) any later version.
+defined( 'ABSPATH' ) or exit;
 
-    This program is distributed in the hope that it will be useful,
-    but WITHOUT ANY WARRANTY; without even the implied warranty of
-    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-    GNU General License for more details.
+final class WP_Viewer_Log {
 
-    You should have received a copy of the GNU General License
-    along with this program; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
-*/
-if ( !defined( 'ABSPATH' ) )
-	exit;
-
-add_action( 'plugins_loaded', array( 'WP_VIEWER_LOG', 'get_instance' ) );
-register_activation_hook( __FILE__, array( 'WP_VIEWER_LOG', 'activation' ) );
-register_deactivation_hook( __FILE__, array( 'WP_VIEWER_LOG', 'deactivation' ) );
-
-final class WP_VIEWER_LOG {
-
-	const WPVL_VERSION = '2.0.1';
-
-	private static $instance = null;
+	private static $_instance;
 
 	private static $options = array();
 
 	private static $default_options = array(
-		'wpvl_version'			=> self::WPVL_VERSION,
+		'wpvl_version'			=> '2.0.2',
 		'wpvl_enable_widget'	=> '1',
 		'wpvl_enable_admin_bar'	=> '1',
 		'wpvl_target_admin_bar' => '1',
-		'wpvl_show_wp_config'	=> '0',
 		'wpvl_custom_code'		=> '1',
-		'wpvl_text_wp_config'	=> ''
 	);
 
 	private static $file_log;
@@ -66,24 +44,49 @@ final class WP_VIEWER_LOG {
 
 	private static $admin_color;
 
-	public static function get_instance() {
-		if ( ! isset( self::$instance ) )
-			self::$instance = new self;
+	public static function instance() {
+		if ( ! isset( self::$_instance ) )
+			self::$_instance = new self;
 
-		return self::$instance;
+		return self::$_instance;
 	}
 
-	public function __clone() {}
+	public static function activation() {
+		$update = array_merge( self::$default_options, self::$options );
+
+		if ( ! self::$options ) {
+			add_option( 'wpvl-options', self::$default_options );
+		} elseif ( ! isset( self::$options['wpvl_enable_admin_bar'] ) ) {
+			update_option( 'wpvl-options', $update );
+		} elseif ( get_option( 'wpvl-version' ) ) {
+			delete_option( 'wpvl-version' );
+			update_option( 'wpvl-options', $update );
+		}
+	}
+
+	public static function deactivation() {
+		// Restore Original wp-config.php
+		if ( file_exists( self::$file_config_bak ) )
+			rename( self::$file_config_bak, self::$file_config );
+
+		// Delete file log
+		if( file_exists( self::$file_log ) )
+			unlink( self::$file_log );
+
+		delete_option( 'wpvl-options' );
+	}
+
+	private function __clone() {}
+
+	private function __wakeup() {}
 
 	private function __construct() {
-		if ( ! current_user_can( 'activate_plugins' ) )
-			return;
-
-		self::$options = get_option( 'wpvl-options' );
-		self::$file_log = ini_get( 'error_log' );
-		self::$file_config = ABSPATH . 'wp-config.php';
+		self::$options         = get_option( 'wpvl-options' );
+		self::$admin_color     = get_user_option( 'admin_color', get_current_user_id() );
+		self::$file_log        = ini_get( 'error_log' );
+		self::$file_config     = ABSPATH . 'wp-config.php';
 		self::$file_config_bak = ABSPATH . 'wp-config-backup.php';
-		self::$text_config = array(
+		self::$text_config     = array(
 			"define( 'WP_DEBUG', true );\n",
 			"if ( WP_DEBUG ) {\n",
 			"\tdefine( 'WP_DEBUG_LOG', true );\n",
@@ -91,8 +94,6 @@ final class WP_VIEWER_LOG {
 			"\t@ini_set( 'display_errors',0 );\n",
 			"}"
 		);
-		self::$admin_color = get_user_option( 'admin_color', get_current_user_id() );
-
 		load_plugin_textdomain( 'wpvllang', false, dirname( plugin_basename( __FILE__ ) ) . '/languages/' );
 
 		$this->clear_log();
@@ -101,45 +102,20 @@ final class WP_VIEWER_LOG {
 		if ( file_exists( self::$file_log ) && is_readable( self::$file_log ) ) {
 			self::$current_log = file( self::$file_log, FILE_IGNORE_NEW_LINES );
 			self::$current_log = array_reverse( self::$current_log, true );
-		} else {
-				set_transient( 'wpvl_log_error', 'log_error', 60 );
-			}
+		}
 
 		if ( file_exists( self::$file_config ) && is_readable( self::$file_config ) ) {
 			self::$current_config = file( self::$file_config );
-		} else {
-			set_transient( 'wpvl_config_error', 'config_error', 60 );
 		}
 
 		add_action( 'init', array( $this, 'init' ) );
-
-		if ( version_compare( PHP_VERSION, '5.4.0', '<') ) {
-			add_filter( 'site_transient_update_plugins', array( $this, 'delete_plugin_update' ) );
-			add_filter( 'plugin_row_meta', array( $this, 'update_info_plugin' ), 10, 2 );
-		}
-	}
-
-	public function delete_plugin_update( $data ) {
-		unset( $data->response[ plugin_basename( __FILE__ ) ] );
-		return $data;
-	}
-
-	public function update_info_plugin( $plugin_meta, $plugin_file ) {
-		if ( plugin_basename( __FILE__ ) !== $plugin_file )
-			return $plugin_meta;
-
-			$plugin_meta[] = sprintf( '<strong>%s</strong>', __( 'Your PHP Version is not compatible with future updates, Upgrade to 5.4 or later', 'wabelang' ) );
-
-			return $plugin_meta;
 	}
 
 	public function init() {
-		add_action( 'admin_init', array( $this, 'add_dashboard_widget' ) );
-		add_action( 'admin_init', array( $this, 'register_settings' ) );
+		add_action( 'admin_init', array( $this, 'admin_init' ) );
 		add_action( 'admin_menu', array( $this, 'admin_menus' ) );
 		add_action( 'admin_bar_menu', array( $this, 'admin_bar_item' ), 99 );
-		add_action( 'admin_enqueue_scripts', array( $this, 'admin_enqueue' ) );
-		add_action( 'all_admin_notices', array( $this, 'add_notices' ) );
+		add_action( 'admin_enqueue_scripts', array( $this, 'admin_enqueue_scripts' ) );
 
 		add_filter( 'plugin_action_links', array( $this, 'plugin_action_links' ), 10, 2 );
 	}
@@ -153,80 +129,35 @@ final class WP_VIEWER_LOG {
     	return $links;
 	}
 
-	public function activation() {
-		global $wp_version;
-
-		if ( version_compare( $wp_version, '3.3', '<' ) ) {
-			wp_die( __( 'This plugin requires WordPress 3.3 or greater.', 'wpvllang' ), '', array( 'back_link' => true ) );
-			exit;
-		}
-
-		if ( self::$options )
-			$update = array_merge( self::$default_options, self::$options );
-
-		if ( ! self::$options ) {
-			add_option( 'wpvl-options', self::$default_options );
-
-		} elseif ( ! isset( self::$options['wpvl_enable_admin_bar'] ) ) {
-			update_option( 'wpvl-options', $update );
-
-		} elseif ( get_option( 'wpvl-version' ) ) {
-			delete_option( 'wpvl-version' );
-			update_option( 'wpvl-options', $update );
-		}
-
-		unset( $update );
-	}
-
-	public function deactivation() {
-		// Restore Original wp-config.php
-		if ( file_exists( self::$file_config_bak ) )
-			rename( self::$file_config_bak, self::$file_config );
-
-		// Delete file log
-		if( file_exists( self::$file_log ) )
-			unlink( self::$file_log );
-
-		delete_option( 'wpvl-options' );
-	}
-
-	public function add_dashboard_widget() {
+	public function admin_init() {
 		if ( isset( self::$options['wpvl_enable_widget'] ) ) {
 			add_action( 'wp_dashboard_setup', array( $this, 'dashboard_widget' ) );
 			add_action( 'wp_network_dashboard_setup', array( $this, 'dashboard_widget' ) );
 		}
+
+		register_setting( 'wpvl-register', 'wpvl-options', array( $this, 'validation' ) );
+		add_settings_section( 'wpvl_general', '', '__return_false', 'wpvl_settings' );
+		add_settings_field( 'wpvl_enable_widget', __( 'Dashboard widget:', 'wpvllang' ),
+			array( $this, 'setting_enable_widget' ), 'wpvl_settings', 'wpvl_general',
+			array( 'label_for' => 'wpvl-enable-widget' ) );
+		add_settings_field( 'wpvl_enable_admin_bar', __( 'Link on Admin Bar:', 'wpvllang' ),
+			array( $this, 'setting_enable_admin_bar' ), 'wpvl_settings', 'wpvl_general' );
+		add_settings_field( 'wpvl_target_admin_bar', __( 'Define Target:', 'wpvllang' ),
+			array( $this, 'setting_target_admin_bar' ), 'wpvl_settings', 'wpvl_general' );
+		add_settings_field( 'wpvl_header',  __( '<strong>Advanced Settings</strong>','wpvllang' ),
+			'__return_false', 'wpvl_settings', 'wpvl_general' );
+		add_settings_field( 'wpvl_custom_code', __( 'Add Code:', 'wpvllang' ),
+			array( $this, 'setting_custom_code' ), 'wpvl_settings', 'wpvl_general' );
+		add_settings_field( 'wpvl_text_wp_config', __( 'Your custom code:', 'wpvllang' ),
+			array( $this, 'setting_text_wp_config' ), 'wpvl_settings', 'wpvl_general',
+			array( 'label_for' => 'wpvl-text-wp-config' ) );
 	}
 
-	public function admin_enqueue() {
-		//wp_register_script( 'wpvl-scripts', plugins_url( 'assets/javascript/dev/jquery.wpvl.js', __FILE__ ), array( 'jquery' ), self::WPVL_VERSION );
-		wp_register_script( 'wpvl-scripts', plugins_url( 'assets/javascript/jquery.wpvl.min.js', __FILE__ ), array( 'jquery' ), self::WPVL_VERSION );
-		wp_register_style( 'wpvl-styles', plugins_url( 'assets/css/wpvl-styles.css', __FILE__ ), '', self::WPVL_VERSION );
+	public function admin_enqueue_scripts() {
+		wp_register_script( 'wpvl-scripts', plugins_url( 'assets/javascript/jquery.wpvl.min.js', __FILE__ ), array( 'jquery' ), '2.0.2' );
+		wp_register_style( 'wpvl-styles', plugins_url( 'assets/css/wpvl-styles.css', __FILE__ ), '', '2.0.2' );
 		wp_enqueue_script( 'wpvl-scripts' );
 		wp_enqueue_style( 'wpvl-styles' );
-	}
-
-	public function add_notices() {
-    	$screen = get_current_screen();
-    	if ( $screen->id != self::$page_hook || $screen->id != self::$subpage_hook )
-			return;
-
-		$html = '';
-		if ( get_transient( 'wpvl_config_error' ) ) {
-			$html .= '<div class="error"><p>';
-			$html .= __( 'Error to load wp-config.php.','wpvllang' );
-			$html .= '</p></div>';
-
-			delete_transient( 'wpvl_config_error' );
-		}
-		if ( get_transient( 'wpvl_log_error' ) ) {
-			$html .= '<div class="error"><p>';
-			$html .= __( 'Error to load log file.','wpvllang' );
-   			$html .= '</p></div>';
-
-			delete_transient( 'wpvl_log_error' );
-		}
-
-		echo $html;
 	}
 
 	public function admin_bar_item( $admin_bar ) {
@@ -397,29 +328,6 @@ final class WP_VIEWER_LOG {
 		echo $html;
 	}
 
-	public function register_settings() {
-		register_setting( 'wpvl-register', 'wpvl-options', array( $this, 'validation' ) );
-		add_settings_section( 'wpvl_general', '', '__return_false', 'wpvl_settings' );
-		add_settings_field( 'wpvl_enable_widget', __( 'Dashboard widget:', 'wpvllang' ),
-			array( $this, 'setting_enable_widget' ), 'wpvl_settings', 'wpvl_general',
-			array( 'label_for' => 'wpvl-enable-widget' ) );
-		add_settings_field( 'wpvl_enable_admin_bar', __( 'Link on Admin Bar:', 'wpvllang' ),
-			array( $this, 'setting_enable_admin_bar' ), 'wpvl_settings', 'wpvl_general' );
-		add_settings_field( 'wpvl_target_admin_bar', __( 'Define Target:', 'wpvllang' ),
-			array( $this, 'setting_target_admin_bar' ), 'wpvl_settings', 'wpvl_general' );
-		add_settings_field( 'wpvl_header',  __( '<strong>Advanced Settings</strong>','wpvllang' ),
-			'__return_false', 'wpvl_settings', 'wpvl_general' );
-		add_settings_field( 'wpvl_show_wp_config', __( 'View wp-config.php:', 'wpvllang' ),
-			array( $this, 'setting_show_wp_config' ), 'wpvl_settings', 'wpvl_general',
-			array( 'label_for' => 'wpvl-show-wp-config' ) );
-		add_settings_field( 'wpvl_custom_code', __( 'Add Code:', 'wpvllang' ),
-			array( $this, 'setting_custom_code' ), 'wpvl_settings', 'wpvl_general' );
-		add_settings_field( 'wpvl_text_wp_config', __( 'Your custom code:', 'wpvllang' ),
-			array( $this, 'setting_text_wp_config' ), 'wpvl_settings', 'wpvl_general',
-			array( 'label_for' => 'wpvl-text-wp-config' ) );
-
-	}
-
 	public function validation( $input ) {
 		$output = array();
 		// Define internal option for disable overwrite wp-config.php file
@@ -441,114 +349,66 @@ final class WP_VIEWER_LOG {
 
 	public function admin_menus() {
 		$num_errors = $this->count_errors();
+		$menu_title = sprintf( 'Log <span class="update-plugins count-%1$s wpvl-bubble"><span class="update-count">%1$s</span></span>', $num_errors );
 
-		$menu_title = sprintf( 'WPVL <span class="update-plugins count-%1$s wpvl-bubble"><span class="update-count">%1$s</span></span>', $num_errors );
-
-		add_menu_page( 'WP Viewer Log', $menu_title, 'activate_plugins', 'wp-viewer-log', array( $this, 'page_log' ), plugins_url( 'assets/images/a-error.png', __FILE__ ) );
-    	self::$page_hook = add_submenu_page('wp-viewer-log', __( 'WPVL Log', 'wpvllang' ), __( 'Log', 'wpvllang' ), 'activate_plugins', 'wp-viewer-log' );
-    	self::$subpage_hook = add_submenu_page('wp-viewer-log', __( 'WPVL Options', 'wpvllang' ), __( 'Options', 'wpvllang' ), 'activate_plugins', 'wp-viewer-log-options', array( $this, 'page_options' ) );
+		add_menu_page( 'WP Viewer Log', $menu_title, 'activate_plugins', 'wp-viewer-log', array( $this, 'page_log' ), 'dashicons-visibility' );
+    	self::$page_hook = add_submenu_page('wp-viewer-log', __( 'Log', 'wpvllang' ), __( 'Log', 'wpvllang' ), 'activate_plugins', 'wp-viewer-log' );
+    	self::$subpage_hook = add_submenu_page('wp-viewer-log', __( 'Options', 'wpvllang' ), __( 'Options', 'wpvllang' ), 'activate_plugins', 'wp-viewer-log-options', array( $this, 'page_options' ) );
 		add_action( 'load-' . self::$subpage_hook, array( $this, 'add_help_tab' ) );
 	}
 
 	public function page_log() {
-?>
+		?>
 		<div class="wrap">
-			<?php screen_icon( 'wp-viewer-log' ); ?>
-			<h2><?php printf( __( 'WP Viewer Log - Version: %s', 'wpvllang' ), self::WPVL_VERSION ); ?></h2>
+			<h1><?php printf( __( 'WP Viewer Log - Version: %s', 'wpvllang' ), '2.0.2' ); ?></h1>
 			<div id="tab-view-log">
-<?php
-				$html = '<div class="wpvl-html theme-' . self::$admin_color . '"><pre>';
-				if ( is_array( self::$current_log ) && !empty( self::$current_log ) ) {
-					$html .= '<table width="100%"  border="0" cellspacing="0" cellpadding="0">';
-					$html .= '<tbody><tr><td class="gutter">';
-					for ( $i=1; $i <= count( self::$current_log ); $i++ ) {
-						$html .= '<div>' . $i . '</div>';
-					}
-					$html .= '</td><td class="code">';
-					foreach ( self::$current_log as $line => $string ) {
-						// eliminating occasional line breaks in the string
-						$string = str_replace( array( "\r\n", "\r", "\n"), '', $string );
-						$html .= '<div>' . esc_html( $string ) . '</div>';
-					}
-					$html .= '</td></tr></tbody></table>';
-				} else {
-					$html .= sprintf( __( '%1sWithout Error%2s','wpvllang' ), '<p class="str">','</p>' );
+		<?php
+			$html = '<div class="wpvl-html theme-' . self::$admin_color . '"><pre>';
+			if ( is_array( self::$current_log ) && !empty( self::$current_log ) ) {
+				$html .= '<table width="100%"  border="0" cellspacing="0" cellpadding="0">';
+				$html .= '<tbody><tr><td class="gutter">';
+				for ( $i=1; $i <= count( self::$current_log ); $i++ ) {
+					$html .= '<div>' . $i . '</div>';
 				}
-				$html .= '</pre></div>';
+				$html .= '</td><td class="code">';
+				foreach ( self::$current_log as $line => $string ) {
+					// eliminating occasional line breaks in the string
+					$string = str_replace( array( "\r\n", "\r", "\n"), '', $string );
+					$html .= '<div>' . esc_html( $string ) . '</div>';
+				}
+				$html .= '</td></tr></tbody></table>';
+			} else {
+				$html .= sprintf( __( '%1sWithout Error%2s','wpvllang' ), '<p class="str">','</p>' );
+			}
+			$html .= '</pre></div>';
 
-				echo $html;
-?>
+			echo $html;
+		?>
 				<form method="post" action="">
 					<?php submit_button( __( 'Clear Log', 'wpvllang' ), 'delete', 'clear-log' ); ?>
 				</form>
 			</div><!-- #tab-view-log -->
 		</div><!-- .wrap -->
-<?php
+		<?php
 	}
 
 	public function page_options() {
-?>
+		?>
 		<div class="wrap">
-			<?php screen_icon( 'wp-viewer-log' ); ?>
-			<h2><?php printf( __( 'WP Viewer Log - Version: %s', 'wpvllang' ), self::WPVL_VERSION ); ?></h2>
-<?php
-		if ( isset( $_GET['settings-updated'] ) )
+			<h1><?php _e( 'WP Viewer Log', 'wpvllang' ); ?></h1>
+		<?php if ( isset( $_GET['settings-updated'] ) ) {
     		echo '<div class="updated fade"><p>' . __( 'Settings saved.' ) . '</p></div>';
-
-		if ( isset( self::$options['wpvl_show_wp_config'] ) && self::$options['wpvl_show_wp_config'] === '1' ) :
-?>
-			<div id="wpvl-tabs">
-			<h3 class="nav-tab-wrapper">
-				<a class="nav-tab nav-tab-active" href="#tab-options"><?php _e( 'Plugin Options', 'wpvllang' ); ?></a>
-				<a class="nav-tab" href="#tab-view-wp-config"><?php _e( 'Current WP Config File', 'wpvllang' ); ?></a>
-<?php
-		else :
-?>
-			<div>
-			<h3><?php _e( 'Plugin Options', 'wpvllang' );
-		endif;
-?>
-		</h3>
-		<div id="tab-options" class="wpvl-content">
+		}
+		?>
+			<h3><?php _e( 'Plugin Options', 'wpvllang' ); ?></h3>
 			<form method="post" action="options.php">
-<?php
-			settings_fields( 'wpvl-register' );
-			do_settings_sections( 'wpvl_settings' );
-			submit_button( null, 'primary', 'submit' );
-?>
+			<?php settings_fields( 'wpvl-register' ); ?>
+			<?php do_settings_sections( 'wpvl_settings' ); ?>
+			<?php submit_button( null, 'primary', 'submit' ); ?>
 			</form>
 		</div>
-		<!-- #tab-options -->
-<?php
-		if ( isset( self::$options['wpvl_show_wp_config'] ) && self::$options['wpvl_show_wp_config'] === '1' ) :
-?>
-			<div id="tab-view-wp-config" class="wpvl-content">
-<?php
-				if ( is_array( self::$current_config ) ) {
-					$html = '<div class="wpvl-html conf theme-' . self::$admin_color . '"><pre>';
-					$html .= '<table width="100%"  border="0" cellspacing="0" cellpadding="0">';
-					$html .= '<tbody><tr><td class="gutter">';
-					for ( $i=1; $i <= count( self::$current_config ); $i++ ) {
-						$html .= '<div>' . $i . '</div>';
-					}
-					$html .= '</td><td class="code">';
-					foreach ( self::$current_config as $line => $string ) {
-						$html .= '<div>' . esc_html( $string ) . '</div>';
-					}
-					$html .= '</td></tr></tbody></table></pre></div>';
-
-					echo $html;
-				}
-?>
-			</div>
-<?php
-		endif;
-?>
-	</div>
-	<!-- #wpvl-tabs -->
-</div>
-<!-- .wrap -->
-<?php
+		<!-- .wrap -->
+		<?php
 	}
 
 	public function add_help_tab() {
@@ -643,13 +503,6 @@ final class WP_VIEWER_LOG {
 <?php
 	}
 
-	public function setting_show_wp_config() {
-		$checked = ( isset( self::$options['wpvl_show_wp_config'] ) ) ? self::$options['wpvl_show_wp_config'] : 0;
-?>
-		<input type="checkbox" id="wpvl-show-wp-config" name="wpvl-options[wpvl_show_wp_config]" value="1" <?php checked( '1', $checked, true ); ?>/>
-<?php
-	}
-
 	public function setting_custom_code() {
 		// Restore to disabled after check error write wp-config.php
 		$reset = get_option( 'wpvl-options' );
@@ -684,4 +537,7 @@ final class WP_VIEWER_LOG {
 <?php
 	}
 }
-?>
+
+add_action( 'plugins_loaded', 'WP_Viewer_Log::instance' );
+register_activation_hook( __FILE__, 'WP_Viewer_Log::activation' );
+register_deactivation_hook( __FILE__, 'WP_Viewer_Log::deactivation' );
